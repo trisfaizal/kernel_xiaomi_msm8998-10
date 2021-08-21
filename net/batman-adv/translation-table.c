@@ -614,8 +614,10 @@ bool batadv_tt_local_add(struct net_device *soft_iface, const u8 *addr,
 
 	/* increase the refcounter of the related vlan */
 	vlan = batadv_softif_vlan_get(bat_priv, vid);
-	if (WARN(!vlan, "adding TT local entry %pM to non-existent VLAN %d",
-		 addr, BATADV_PRINT_VID(vid))) {
+	if (!vlan) {
+		net_ratelimited_function(batadv_info, soft_iface,
+					 "adding TT local entry %pM to non-existent VLAN %d\n",
+					 addr, BATADV_PRINT_VID(vid));
 		kfree(tt_local);
 		tt_local = NULL;
 		goto out;
@@ -869,6 +871,7 @@ batadv_tt_prepare_tvlv_local_data(struct batadv_priv *bat_priv,
 
 		tt_vlan->vid = htons(vlan->vid);
 		tt_vlan->crc = htonl(vlan->tt.crc);
+		tt_vlan->reserved = 0;
 
 		tt_vlan++;
 	}

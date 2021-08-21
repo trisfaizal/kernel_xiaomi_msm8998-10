@@ -311,8 +311,11 @@ int usb_function_deactivate(struct usb_function *function)
 
 	spin_lock_irqsave(&cdev->lock, flags);
 
-	if (cdev->deactivations == 0)
+	if (cdev->deactivations == 0) {
+		spin_unlock_irqrestore(&cdev->lock, flags);
 		status = usb_gadget_deactivate(cdev->gadget);
+		spin_lock_irqsave(&cdev->lock, flags);
+	}
 	if (status == 0)
 		cdev->deactivations++;
 
@@ -343,8 +346,11 @@ int usb_function_activate(struct usb_function *function)
 		status = -EINVAL;
 	else {
 		cdev->deactivations--;
-		if (cdev->deactivations == 0)
+		if (cdev->deactivations == 0) {
+			spin_unlock_irqrestore(&cdev->lock, flags);
 			status = usb_gadget_activate(cdev->gadget);
+			spin_lock_irqsave(&cdev->lock, flags);
+		}
 	}
 
 	spin_unlock_irqrestore(&cdev->lock, flags);
@@ -890,7 +896,12 @@ static int set_config(struct usb_composite_dev *cdev,
 	}
 
 done:
-	usb_gadget_vbus_draw(gadget, USB_VBUS_DRAW(gadget->speed));
+	if (power <= USB_SELF_POWER_VBUS_MAX_DRAW)
+		usb_gadget_set_selfpowered(gadget);
+	else
+		usb_gadget_clear_selfpowered(gadget);
+
+	usb_gadget_vbus_draw(gadget, power);
 	if (result >= 0 && cdev->delayed_status)
 		result = USB_GADGET_DELAYED_STATUS;
 	return result;
@@ -1068,7 +1079,7 @@ static void collect_langs(struct usb_gadget_strings **sp, __le16 *buf)
 	while (*sp) {
 		s = *sp;
 		language = cpu_to_le16(s->language);
-		for (tmp = buf; *tmp && tmp < &buf[126]; tmp++) {
+		for (tmp = buf; *tmp && tmp < &buf[USB_MAX_STRING_LEN]; tmp++) {
 			if (*tmp == language)
 				goto repeat;
 		}
@@ -1143,7 +1154,7 @@ static int get_string(struct usb_composite_dev *cdev,
 			collect_langs(sp, s->wData);
 		}
 
-		for (len = 0; len <= 126 && s->wData[len]; len++)
+		for (len = 0; len <= USB_MAX_STRING_LEN && s->wData[len]; len++)
 			continue;
 		if (!len)
 			return -EINVAL;
@@ -2356,6 +2367,7 @@ void composite_suspend(struct usb_gadget *gadget)
 	cdev->suspended = 1;
 	spin_unlock_irqrestore(&cdev->lock, flags);
 
+	usb_gadget_set_selfpowered(gadget);
 	usb_gadget_vbus_draw(gadget, 2);
 }
 
@@ -2395,7 +2407,13 @@ void composite_resume(struct usb_gadget *gadget)
 				f->resume(f);
 		}
 
-		usb_gadget_vbus_draw(gadget, USB_VBUS_DRAW(gadget->speed));
+		maxpower = cdev->config->MaxPower;
+
+		if (maxpower > USB_SELF_POWER_VBUS_MAX_DRAW)
+			usb_gadget_clear_selfpowered(gadget);
+
+		usb_gadget_vbus_draw(gadget, maxpower ?
+			maxpower : CONFIG_USB_GADGET_VBUS_DRAW);
 	}
 
 	spin_unlock_irqrestore(&cdev->lock, flags);
